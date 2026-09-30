@@ -75,16 +75,18 @@ def popo_generate(prompt, base64_image):
 
     from openai import OpenAI
 
-    url = ""
-    key = ""
-    base_model = "Popo"
+    url = os.environ.get("POPO_VLLM_URL", "").strip()
+    key = os.environ.get("POPO_VLLM_API_KEY", "").strip()
+    base_model = os.environ.get("POPO_MODEL_NAME", "Popo").strip() or "Popo"
     client = OpenAI(
-        base_url=url,
-        api_key=key
+        base_url=url or None,
+        api_key=key or None,
+        timeout=float(os.environ.get("POPO_API_TIMEOUT", "300")),
     )
     res = ""
     cnt = 0
     prompt = prompt[:100000] if len(prompt)>100000 else prompt
+    max_tokens = int(os.environ.get("POPO_MAX_TOKENS", "4096"))
     
     
     if base64_image:
@@ -117,7 +119,7 @@ def popo_generate(prompt, base64_image):
             response = client.chat.completions.create(
                 model=base_model,
                 messages=messages,
-                max_tokens=50000,
+                max_tokens=max_tokens,
                 temperature = 1
             )
             res = response.choices[0].message.content
@@ -133,16 +135,18 @@ def popo_generate(prompt, base64_image):
 def qwen_generate(prompt, base64_image):
     from openai import OpenAI
 
-    url = ""
-    key = ""
+    url = os.environ.get("POPO_VLLM_URL", "").strip()
+    key = os.environ.get("POPO_VLLM_API_KEY", "").strip()
     base_model = "Qwen3-VL-4B-Instruct"
     client = OpenAI(
-        base_url=url,
-        api_key=key
+        base_url=url or None,
+        api_key=key or None,
+        timeout=float(os.environ.get("POPO_API_TIMEOUT", "300")),
     )
     res = ""
     cnt = 0
     prompt = prompt[:100000] if len(prompt)>100000 else prompt
+    max_tokens = int(os.environ.get("POPO_MAX_TOKENS", "4096"))
     
     
     if base64_image:
@@ -175,7 +179,7 @@ def qwen_generate(prompt, base64_image):
             response = client.chat.completions.create(
                 model=base_model,
                 messages=messages,
-                max_tokens=50000,
+                max_tokens=max_tokens,
                 temperature = 1
             )
             res = response.choices[0].message.content
@@ -191,16 +195,18 @@ def qwen_generate(prompt, base64_image):
 def gpt_generate(prompt, base64_image):#gemini-3-pro-preview
     from openai import OpenAI
 
-    url = ""
-    key = ""
+    url = os.environ.get("POPO_VLLM_URL", "").strip()
+    key = os.environ.get("POPO_VLLM_API_KEY", "").strip()
     base_model = "gemini-3-flash-preview"
     client = OpenAI(
-        base_url=url,
-        api_key=key
+        base_url=url or None,
+        api_key=key or None,
+        timeout=float(os.environ.get("POPO_API_TIMEOUT", "300")),
     )
     res = ""
     cnt = 0
     prompt = prompt[:100000] if len(prompt)>100000 else prompt
+    max_tokens = int(os.environ.get("POPO_MAX_TOKENS", "4096"))
     
     
     if base64_image:
