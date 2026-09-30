@@ -524,6 +524,9 @@ def adaptive_chunk(items, chunk_size=50, overlap=1):
     sorted_items = sorted(items, key=lambda x: x['page'])
     pages = [item['page'] for item in sorted_items]
     unique_pages = sorted(set(pages))
+    if len(unique_pages) == 1:
+        page = unique_pages[0]
+        return [[page, page]], [sorted_items]
     
     boundaries = []
     current_min = unique_pages[0]
