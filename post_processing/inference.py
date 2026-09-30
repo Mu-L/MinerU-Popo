@@ -31,12 +31,21 @@ def concatenate_pdf_pages_with_border(doc_label, pages, border_width=5, border_c
     pdf_path = doc_label
     
     doc = fitz.open(pdf_path)
-    pil_images = []
     if not pages:
         pages = [1]
-    for page_num in pages:
-        page = doc[page_num - 1]
-        pix = page.get_pixmap()
+    page_objs = [doc[page_num - 1] for page_num in pages]
+
+    # JPEG/libjpeg 单边最大 65500 像素；超过会在 save 时报
+    # "broken data stream when writing image file"。
+    # 先按预估拼接尺寸计算缩放，再低分辨率渲染，避免生成超限大图。
+    MAX_JPEG_DIM = 60000
+    est_total_height = sum(page.rect.height for page in page_objs) + border_width * (len(page_objs) - 1)
+    est_max_width = max((page.rect.width for page in page_objs), default=0)
+    scale = min(1.0, MAX_JPEG_DIM / max(est_total_height, est_max_width, 1))
+
+    pil_images = []
+    for page_num, page in zip(pages, page_objs):
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale)) if scale < 1.0 else page.get_pixmap()
         img_data = pix.tobytes("jpeg")
         img = Image.open(io.BytesIO(img_data))
         
@@ -75,10 +84,12 @@ def concatenate_pdf_pages_with_border(doc_label, pages, border_width=5, border_c
             y_offset += img.height
     
     buffered = io.BytesIO()
-
     
     buffered.seek(0)
     buffered.truncate(0)
+    # 兜底：极端舍入/异常页面下仍保证不超过 JPEG 单边上限
+    if max(result.size) > MAX_JPEG_DIM:
+        result.thumbnail((MAX_JPEG_DIM, MAX_JPEG_DIM))
     result.save(buffered, format="JPEG", quality=100, optimize=True)
         
     base64_result = base64.b64encode(buffered.getvalue()).decode('utf-8')
