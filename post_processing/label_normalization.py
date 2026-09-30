@@ -586,7 +586,7 @@ class MonkeyOCRReader(MineruReader):
 
 
 def map_mineru_label(label: str) -> tuple[str, str]:
-    if label == "title":
+    if label in {"title", "doc_title", "paragraph_title"}:
         return "title", "title"
     if label in SUPPLEMENT_LABEL_MAP:
         return "text", SUPPLEMENT_LABEL_MAP[label]
