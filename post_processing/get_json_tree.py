@@ -114,6 +114,10 @@ def construct_json_tree(input_file, output_dir, txt_dir):
                             visual_component['metadata'] = visual_component['metadata'] + " " + elem['content'] if visual_component['metadata']  else elem['content']
                             visual_component['location'].append({'bbox':elem['bbox'], 'page':elem['page']})
                             visual_component['block_ids'].append(elem['id'])
+                if element.get('img_path'):
+                    visual_component['img_path'] = element['img_path']
+                if not visual_component['title'] and element.get('caption'):
+                    visual_component['title'] = element['caption']
                 visual_components.append(visual_component)
 
         for visual_component in visual_components:

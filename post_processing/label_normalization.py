@@ -54,6 +54,8 @@ class NormalizedBlock:
     title_level: int | None = None
     source_label: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    img_path: str | None = None
+    caption: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -70,6 +72,9 @@ class NormalizedBlock:
         if self.source_label is not None:
             block["source_label"] = self.source_label
         block["source_id"] = self.block_id
+        for key in ("img_path", "caption"):
+            if getattr(self, key):
+                block[key] = getattr(self, key)
         return block
 
 
@@ -261,10 +266,75 @@ def extract_middle_text(block: dict[str, Any]) -> str:
 
 
 def extract_block_content(block: dict[str, Any]) -> str:
-    for key in ("content", "text", "html", "words"):
+    for key in ("content", "text", "html", "words", "table_body"):
         if block.get(key):
             return normalize_text(block.get(key))
+    if block.get("type") == "table":
+        for _, span in iter_middle_spans(block):
+            if span.get("type") == "table" and span.get("html"):
+                return normalize_text(span["html"])
     return extract_middle_text(block)
+
+
+def iter_middle_spans(block):
+    for child in block.get("blocks") or []:
+        for line in child.get("lines") or []:
+            for span in line.get("spans") or []:
+                yield child.get("type"), span
+
+
+def set_visual_metadata(block, item):
+    if block.type not in {"image", "table"}:
+        return
+    path = item.get("img_path") or item.get("image_path")
+    caption = item.get(f"{block.type}_caption") or ""
+    if isinstance(caption, list):
+        caption = " ".join(str(text) for text in caption if text)
+    captions = []
+    for child_type, span in iter_middle_spans(item):
+        nested_path = span.get("image_path")
+        if not path and nested_path:
+            # middle.json paths are relative to its images/ directory.
+            path = str(Path("images") / str(nested_path)) if len(Path(str(nested_path)).parts) == 1 else str(nested_path)
+        if child_type == f"{block.type}_caption" and span.get("content"):
+            captions.append(str(span["content"]))
+    block.img_path = str(path) if path else None
+    block.caption = normalize_text(caption or " ".join(captions)) or None
+
+
+def bbox_iou(left, right):
+    width = max(0, min(left[2], right[2]) - max(left[0], right[0]))
+    height = max(0, min(left[3], right[3]) - max(left[1], right[1]))
+    intersection = width * height
+    area = lambda box: max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+    union = area(left) + area(right) - intersection
+    return intersection / union if union else 0
+
+
+def enrich_visual_blocks(blocks, sources):
+    """Fill missing fields only; reject weak or ambiguous spatial matches."""
+    for block in blocks:
+        if block.type not in {"image", "table"}:
+            continue
+        candidates = sorted(
+            [(bbox_iou(block.bbox, source.bbox), source)
+             for source in sources
+             if source.page == block.page and source.type == block.type],
+            key=lambda entry: entry[0], reverse=True,
+        )
+        if not candidates or candidates[0][0] < 0.5:
+            continue
+        if len(candidates) > 1 and candidates[0][0] - candidates[1][0] < 0.1:
+            continue
+        source = candidates[0][1]
+        # Do not copy one source visual onto multiple overlapping target blocks.
+        if sum(other.type == block.type and other.page == block.page
+               and bbox_iou(other.bbox, source.bbox) >= 0.5 for other in blocks) != 1:
+            continue
+        block.img_path = block.img_path or source.img_path
+        block.caption = block.caption or source.caption
+        if block.type == "table" and not block.content:
+            block.content = source.content
 
 
 def iter_model_pages(data: Any) -> Iterable[tuple[int, list[dict[str, Any]]]]:
@@ -466,15 +536,27 @@ class MineruReader(BaseReader):
         if not model_path.exists() and not middle_path.exists() and not content_list_path.exists():
             return ReaderResult(self.model_name, doc_id, "missing", message=f"Missing {model_path}")
 
-        if model_path.exists():
-            return self._read_model(doc_id, model_path)
-        if middle_path.exists():
-            return self._read_middle(doc_id, middle_path)
         content_items = []
         if content_list_path.exists():
             loaded = safe_json_load(content_list_path)
             if isinstance(loaded, list):
                 content_items = loaded
+        if model_path.exists():
+            result = self._read_model(doc_id, model_path)
+            enrich_visual_blocks(result.blocks, self._read_content_list(doc_id, content_items).blocks)
+            if middle_path.exists() and any(
+                block.type in {"image", "table"} and (
+                    not block.img_path or not block.caption
+                    or (block.type == "table" and not block.content)
+                )
+                for block in result.blocks
+            ):
+                enrich_visual_blocks(result.blocks, self._read_middle(doc_id, middle_path).blocks)
+            return result
+        if middle_path.exists():
+            result = self._read_middle(doc_id, middle_path)
+            enrich_visual_blocks(result.blocks, self._read_content_list(doc_id, content_items).blocks)
+            return result
         return self._read_content_list(doc_id, content_items)
 
     def _read_model(self, doc_id: str, model_path: Path) -> ReaderResult:
@@ -502,6 +584,7 @@ class MineruReader(BaseReader):
                         meta={"source": "model_json"},
                     )
                 )
+                set_visual_metadata(blocks[-1], item)
                 order += 1
         return finalize_reader_result(self.model_name, doc_id, blocks)
 
@@ -535,6 +618,7 @@ class MineruReader(BaseReader):
                         page_height=page_height,
                     )
                 )
+                set_visual_metadata(blocks[-1], item)
                 order += 1
         return finalize_reader_result(self.model_name, doc_id, blocks)
 
@@ -568,6 +652,7 @@ class MineruReader(BaseReader):
                     meta={"source": "content_list"},
                 )
             )
+            set_visual_metadata(blocks[-1], item)
             order += 1
         return finalize_reader_result(self.model_name, doc_id, blocks)
 
